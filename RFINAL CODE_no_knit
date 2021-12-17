@@ -1,0 +1,420 @@
+library(knitr)
+(s = system.file("Final Code", "knitr-spin.R", package = "knitr"))
+spin(s)  # default markdown
+o = spin(s, knit = FALSE)  # convert to Rmd only
+knit2html(o)  
+
+install.packages("rmarkdown")
+library(rmarkdown)
+library(tidyverse)
+library(gtsummary)
+library(tidyverse)
+library(dplyr)
+library(foreign)
+library(ggplot2)
+library(MASS)
+library(gvlma)
+library(caret)
+library(stargazer)
+
+
+# # # # # merging data
+
+# df: a dataset of only those marketers, who are also CHWs
+df <-subset(marketing_complete_fixed_cleaned_copy, job_what!="8" & job_what!="4" & job_what!="10" & job_what!="3" & job_what!="2" & job_what!="9" & job_what!="NA" )
+df
+view(df)
+
+
+
+#merge of the cleaned dataset of CHW == marketer only, with household dataset
+total_df <- merge(hh_complete_fixed_cleaned_copy, df, by="village_id")
+view(total_df)
+
+#merger of the combined dataset (cleaned CHW + household) with village dataset
+total_df_vil <- merge(total_df,village_complete_fixed_cleaned_merged_copy , by="village_id")
+total_df_vil
+view(total_df_vil)
+
+
+# # # # # Variable creation
+#treatment/no treatment variable in constituency.x in total_df_vil renaming
+total_df_vil$constituency.x <- gsub("BUMULA", "no_treatment", total_df_vil$constituency.x)
+total_df_vil$constituency.x <- gsub("SIRISIA", "no_treatment", total_df_vil$constituency.x)
+total_df_vil$constituency.x <- gsub("TESO NORTH", "treatment", total_df_vil$constituency.x)
+total_df_vil
+
+#Hygiene behavior - house_lat_comb (mean of cleanness & usage) creation
+total_df_vil$house_lat_comb <- (total_df_vil$house_lat_clean + total_df_vil$house_lat_use_signs)/2
+total_df_vil
+
+#Change of sanitation system - house_lat_new ("I dont know" answers - 9999 coded as missings + 0== no change, 1== any change)
+total_df_vil$house_lat_new1 <- total_df_vil$house_lat_new
+total_df_vil$house_lat_new1 <- gsub("9999", NA, total_df_vil$house_lat_new1)
+total_df_vil$house_lat_new_YN <- ifelse(total_df_vil$house_lat_new1  == '0', 0, 1)
+view(total_df_vil$house_lat_new_YN)
+
+
+#Main job - no_job_san (0== no, 1== yes& partially yes)
+view(total_df_vil$job_san)
+total_df_vil$no_job_san <- ifelse(total_df_vil$job_san == '3', 0, 1)
+view(total_df_vil$no_job_san)
+
+
+
+# Earnings (recoding no earnings to 0, recoding all others - "small allowance" etc to 1, then recoding earn_job_month that had 0 to 0)
+total_df_vil$earn_san_oth_yn <- total_df_vil$earn_san_oth
+total_df_vil$earn_san_oth_yn<- gsub("Am not paid", "0", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn<- gsub("Free", "0", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn<- gsub("No", "0", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn<- gsub("None", "0", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn<- gsub("N0t paid", "0", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn<- gsub("Pure voluntary", "0", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn<- gsub("Volunteer", "0", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn<- gsub("Small allowance", "1", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn<- gsub("We get paid only during trainings and commisions earned depending on performance", "1", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn<- gsub("A fixed rate of 300 plus the assessment commisions per house hold.", "1", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn<- gsub("0t paid", "0", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn<- gsub("0ne", "0", total_df_vil$earn_san_oth_yn)
+total_df_vil$earn_san_oth_yn
+view(total_df_vil$earn_san_oth_yn)
+
+view(total_df_vil$earn_san)
+total_df_vil$earn_yn_new <- total_df_vil$earn_san
+view(total_df_vil$earn_yn_new)
+total_df_vil <- total_df_vil%>% 
+  mutate(earn_yn_new = case_when(earn_san == 6 & earn_san_oth_yn == 0 ~ 0, #condition 1
+                                 earn_san == 6 & earn_san_oth_yn == 1 ~ 1,
+                                 earn_san == 5 & earn_job_mnth == 0 ~ 0,
+                                 earn_san == 5 & earn_job_mnth >= 0 ~ 1,
+                                 
+                                 TRUE ~ 1)) #all other cases
+
+
+
+# # # # Descriptive statistics
+
+# Hygiene behavior - house_lat_comb
+aggregate(x = total_df_vil$house_lat_comb,               
+          by = list(total_df_vil$constituency.x),              
+          FUN = mean, na.rm = TRUE)
+
+aggregate(x = total_df_vil$house_lat_comb,                
+          by = list(total_df_vil$constituency.x),              
+          FUN = median, na.rm = TRUE)
+
+aggregate(x = total_df_vil$house_lat_comb,                
+          by = list(total_df_vil$constituency.x),             
+          FUN = sd , na.rm = TRUE)
+
+# Shapiro-Wilk normality test for treatment villages
+with(total_df_vil, shapiro.test(house_lat_comb[constituency.x == "treatment"]))
+# Shapiro-Wilk normality test for no treatment villages
+with(total_df_vil, shapiro.test(house_lat_comb[constituency.x == "no_treatment"]))
+
+
+#Wilcox. rank test
+res1a_w <- wilcox.test(house_lat_comb ~ constituency.x, data = total_df_vil,
+                       exact = FALSE)
+res1a_w
+
+
+#Change of sanitation systems - house_lat_new_YN
+tab_change <- total_df_vil %>% dplyr::select(house_lat_new_YN, constituency.x)
+view(tab_change)
+tab_change %>% tbl_summary(by = constituency.x)
+
+#chi square test  
+tbl_2 = table(total_df_vil$house_lat_new_YN,total_df_vil$constituency.x) 
+view(tbl_2) 
+chisq.test(tbl_2)
+round(chisq_hln$residuals, 3)
+
+
+#Barazas
+summary(total_df_vil$barazas_nr.x)
+sd(total_df_vil$barazas_nr.x)
+sum(is.na(total_df_vil$time_san))
+
+aggregate(x = total_df_vil$barazas_nr.x,                
+          by = list(total_df_vil$constituency.x),              
+          FUN = mean, na.rm = TRUE)
+
+aggregate(x = total_df_vil$barazas_nr.x,                
+          by = list(total_df_vil$constituency.x),              
+          FUN = median, na.rm = TRUE)
+
+aggregate(x = total_df_vil$barazas_nr.x,                
+          by = list(total_df_vil$constituency.x),              
+          FUN = sd , na.rm = TRUE)
+
+# Shapiro-Wilk normality test for treatment villages
+with(total_df_vil, shapiro.test(barazas_nr.x[constituency.x == "treatment"]))
+# Shapiro-Wilk normality test for no treatment villages
+with(total_df_vil, shapiro.test(barazas_nr.x[constituency.x == "no_treatment"]))
+
+#Wilcox. rank test
+resb_wt <- wilcox.test(barazas_nr.x ~constituency.x, data = total_df_vil,
+                       exact = FALSE)
+resb_wt
+
+
+
+#Time spent on sanitation marketing
+summary(total_df_vil$time_san)
+sd(total_df_vil$time_san)
+
+aggregate(x = total_df_vil$time_san,                
+          by = list(total_df_vil$constituency.x),              
+          FUN = mean, na.rm = TRUE)
+
+aggregate(x = total_df_vil$time_san,                
+          by = list(total_df_vil$constituency.x),              
+          FUN = median, na.rm = TRUE)
+
+aggregate(x = total_df_vil$time_san,                
+          by = list(total_df_vil$constituency.x),              
+          FUN = sd , na.rm = TRUE)
+
+sum(is.na(total_df_vil$time_san))
+
+# Shapiro-Wilk normality test for treatment villages
+with(total_df_vil, shapiro.test(time_san[constituency.x == "treatment"]))
+# Shapiro-Wilk normality test for no treatment villages
+with(total_df_vil, shapiro.test(time_san[constituency.x == "no_treatment"]))
+
+#Wilcox. rank test
+rests_wt <- wilcox.test(time_san ~constituency.x, data = total_df_vil,
+                        exact = FALSE)
+rests_wt
+
+
+#Earnings
+summary(total_df_vil$earn_yn_new)
+tab_earn <- total_df_vil %>% dplyr::select(earn_yn_new, constituency.x)
+view(tab_earn)
+tab_earn %>% tbl_summary(by = constituency.x, statistic = list(all_continuous() ~ "{mean} ({sd})",all_categorical() ~ "{n} / {N} ({p}%)")) %>% add_p()
+
+#Chi-square
+bl1 = table(tab_earn) 
+view(bl1) 
+chisq.test(bl1)
+
+#chi-square residuals 
+round(chisq_bl$residuals, 3)
+chi_tab <- round(chisq_bl$residuals, 3)
+
+
+
+
+#Main job
+summary(total_df_vil$no_job_san)
+tab_job <- total_df_vil %>% dplyr::select(no_job_san, constituency.x)
+view(tab_job)
+tab_job %>% tbl_summary(by = constituency.x, statistic = list(all_continuous() ~ "{mean} ({sd})",all_categorical() ~ "{n} / {N} ({p}%)")) %>% add_p()
+
+
+#Chi-square
+bl = table(tab_job) 
+view(bl) 
+chisq.test(bl)
+
+#chi-square residuals
+chisq_bl <- chisq.test(bl)
+round(chisq_bl$residuals, 3)
+
+
+
+
+
+# # # # # Regressions
+# Hygiene behavior - house_lat_comb
+
+m1 <- lm(house_lat_comb ~ constituency.x,
+         data = total_df_vil)
+m2 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x,
+         data = total_df_vil)
+m3 <- lm(house_lat_comb ~ constituency.x + 
+           barazas_nr.x + time_san + no_job_san,
+         data = total_df_vil)
+m4 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new,
+         data = total_df_vil)
+stargazer(m1, m2, m4, type="html",
+          dep.var.labels=c("Hygiene Behavior"),
+          covariate.labels=c("Area","Number of barazas","Time spent on marketing (%) ",
+                             
+                             "Main job","Earnings"),ci=TRUE, ci.level=0.95, out="models1.htm")
+
+
+
+
+#Change of san.systems - house_lat_new
+m11 <- glm(house_lat_new_YN ~ constituency.x, family = binomial(link = "probit"), 
+           data = total_df_vil)
+m22 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x, family = binomial(link = "probit"), 
+           data = total_df_vil)
+m33 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new, family = binomial(link = "probit"), 
+           data = total_df_vil)
+stargazer(m11, m22, m33, type="html",
+          dep.var.labels=c("Installment or Improvement of the Sanitation System"),
+          covariate.labels=c("Area","Number of barazas","Time spent on marketing (%) ",
+                             "Main job","Earnings"), ci=TRUE, ci.level = 0.95, out="models_hln_new.htm")
+
+
+#Average of sample marginal effects is
+m11_av <- mean(dnorm(predict(m11, type = "link")))
+m11_av * coef(m11)
+
+m22_av <- mean(dnorm(predict(m22, type = "link")))
+m22_av * coef(m22)
+
+m33_av <- mean(dnorm(predict(m33, type = "link")))
+m33_av * coef(m33)
+
+
+
+
+# # # # Appendix
+#Regression use_signs
+m10 <- lm(house_lat_use_signs ~ constituency.x,
+          data = total_df_vil)
+m20 <- lm(house_lat_use_signs ~ constituency.x + barazas_nr.x,
+          data = total_df_vil)
+m30 <- lm(house_lat_use_signs ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new,
+          data = total_df_vil)
+stargazer(m10, m20, m30, type="html",
+          dep.var.labels=c("Sanitation Usage Signs"),
+          covariate.labels=c("Area","Number of barazas","Time spent on marketing (%) ",
+                             "Main job","Earnings") ,keep.stat="all", out="models10.htm")
+
+
+
+#Regression cleanliness
+m100 <- lm(house_lat_clean ~ constituency.x,
+           data = total_df_vil)
+m200 <- lm(house_lat_clean ~ constituency.x + barazas_nr.x,
+           data = total_df_vil)
+m300 <- lm(house_lat_clean ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new,
+           data = total_df_vil)
+stargazer(m100, m200, m300, type="html", title=" Maintatance and Cleanness Regression Results",
+          dep.var.labels=c("Maintanance and Cleanness of a Sanitation System"),
+          covariate.labels=c("Area","Number of barazas","Time spent on marketing (%) ",
+                             "Main job","Earnings"), 
+          ci=TRUE, ci.level=0.95, single.row=TRUE,
+          out="models101.htm")
+
+
+
+#Regression O-logit for Hygiene behavior
+m1x <- lm(house_lat_comb ~ constituency.x,
+          data = total_df_vil)
+m2x <- lm(house_lat_comb ~ constituency.x + barazas_nr.x,
+          data = total_df_vil)
+m4x <- lm(house_lat_comb ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new,
+          data = total_df_vil)
+m5x <- polr(as.factor(house_lat_comb) ~  constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new, data = total_df_vil , Hess=TRUE, method = c("logistic"))
+stargazer(m1x, m2x, m4x,m5x, type="html",
+          dep.var.labels=c("Hygiene Behavior O-logit Regression"),
+          covariate.labels=c("Area","Number of barazas","Time spent on marketing (%) ",
+                             
+                             "Main job","Earnings"),ci=TRUE, ci.level=0.95, out="olog.htm")
+
+
+#Regression OLS for Change Systems
+m11 <- glm(house_lat_new_YN ~ constituency.x, family = binomial(link = "probit"), 
+           data = total_df_vil)
+m22 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x, family = binomial(link = "probit"), 
+           data = total_df_vil)
+m33 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new, family = binomial(link = "probit"), 
+           data = total_df_vil)
+m333 <- lm(house_lat_new_YN ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new,  
+           data = total_df_vil)
+stargazer(m11, m22, m33,m333, type="html",
+          dep.var.labels=c("Installment or Improvement of the Sanitation System (OLS)"),
+          covariate.labels=c("Area","Number of barazas","Time spent on marketing (%) ",
+                             "Main job","Earnings"), ci=TRUE, ci.level = 0.95, out="models_hln_ols.htm")
+
+
+
+
+#interactions of each CHW variable & barazas with area (one by one) Hygiene behavior outcome
+m1..1 <- lm(house_lat_comb ~ constituency.x,
+            data = total_df_vil)
+m2..2 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x,
+            data = total_df_vil)
+m3..3 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x + time_san + no_job_san,
+            data = total_df_vil)
+m4..4 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new,
+            data = total_df_vil)
+m5..5 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x + time_san + no_job_san + constituency.x:barazas_nr.x,
+            data = total_df_vil)
+m6..6 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x + time_san + no_job_san + constituency.x:time_san,
+            data = total_df_vil)
+m7..7 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x + time_san + no_job_san + constituency.x:no_job_san,
+            data = total_df_vil)
+m8..8 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x + time_san + no_job_san + constituency.x:earn_yn_new,
+            data = total_df_vil)
+stargazer(m1..1, m2..2, m3..3, m4..4, m5..5,m6..6,m7..7,m8..8, type="html",
+          dep.var.labels=c("Hygiene Behavior"),
+          covariate.labels=c("Area","Number of barazas","Time spent on marketing (%)","Main job", "Earnings"), ci=TRUE, ci.level=0.95, out="modelsIndiviInteraction100.htm")
+
+
+#interactions of each CHW variable & barazas with area (one by one) Change of Systems outcome
+m11_1 <- glm(house_lat_new_YN ~ constituency.x, family = binomial(link = "probit"), 
+             data = total_df_vil)
+m22_2 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x, family = binomial(link = "probit"), 
+             data = total_df_vil)
+m33_3 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new, family = binomial(link = "probit"), 
+             data = total_df_vil)
+m44_4 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new + constituency.x:barazas_nr.x, family = binomial(link = "probit"), data = total_df_vil)
+m55_5 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x + time_san + no_job_san + constituency.x:time_san, family = binomial(link = "probit"), data = total_df_vil)
+m66_6 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new + constituency.x:no_job_san, family = binomial(link = "probit"), data = total_df_vil)
+m66_6_x <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new + constituency.x:earn_yn_new, family = binomial(link = "probit"), data = total_df_vil)
+stargazer(m11_1, m22_2, m33_3, m44_4, m55_5,m66_6,m66_6_x, type="html",
+          dep.var.labels=c("Installment or Improvement of the Sanitation System"),
+          covariate.labels=c("Area","Number of barazas","Time spent on marketing (%) ",
+                             "Main job"), ci=TRUE, ci.level = 0.95, out="models_hln_interaction02.htm")
+
+
+#interaction model Hygiene behavior (all CHW predictors & barazas with area)
+
+m1.x1 <- lm(house_lat_comb ~ constituency.x,
+            data = total_df_vil)
+m2.x2 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x,
+            data = total_df_vil)
+m4.x4 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new,
+            data = total_df_vil)
+m5.x5 <- lm(house_lat_comb ~ constituency.x + barazas_nr.x + time_san + no_job_san + constituency.x:barazas_nr.x + constituency.x:time_san + constituency.x:no_job_san + constituency.x:earn_yn_new,
+            data = total_df_vil)
+stargazer(m1.x1, m2.x2, m4.x4, m5.x5, type="html",
+          dep.var.labels=c("Hygiene Behavior"),
+          covariate.labels=c("Area","Number of barazas","Time spent on marketing (%)","Main job", "Earnings"), ci=TRUE, ci.level=0.95, out="modelsIndiviInteraction100.htm")
+
+
+#interaction model Change of Systems (all CHW predictors & barazas with area)
+
+m11_1 <- glm(house_lat_new_YN ~ constituency.x, family = binomial(link = "probit"), 
+             data = total_df_vil)
+m22_2 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x, family = binomial(link = "probit"), 
+             data = total_df_vil)
+m33_3 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x + time_san + no_job_san + earn_yn_new, family = binomial(link = "probit"), 
+             data = total_df_vil)
+m44_4 <- glm(house_lat_new_YN ~ constituency.x + barazas_nr.x + time_san + no_job_san + constituency.x:barazas_nr.x + constituency.x:time_san + constituency.x:no_job_san + constituency.x:earn_yn_new, family = binomial(link = "probit"), data = total_df_vil)
+stargazer(m11_1, m22_2, m33_3, m44_4, type="html",
+          dep.var.labels=c("Installment or Improvement of the Sanitation System"),
+          covariate.labels=c("Area","Number of barazas","Time spent on marketing (%) ",
+                             "Main job"), ci=TRUE, ci.level = 0.95, out="models_hln_interaction02.htm")
+
+m11_avx <- mean(dnorm(predict(m11_1, type = "link")))
+m11_avx * coef(m11)
+
+m22_avx <- mean(dnorm(predict(m22_2, type = "link")))
+m22_avx * coef(m22)
+
+m33_avx <- mean(dnorm(predict(m33_3, type = "link")))
+m33_avx * coef(m33)
+
+m44_avx <- mean(dnorm(predict(m44_4, type = "link")))
+m44_avx * coef(m33)
+
+
